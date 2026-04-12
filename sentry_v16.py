@@ -17,7 +17,7 @@ UPSTREAM_URL        = os.environ.get("SENTRY_UPSTREAM", "http://localhost:8000")
 WARMUP_STEPS        = int(os.environ.get("SENTRY_WARMUP", "5"))
 VOCAB_SIZE          = 50000
 REQUEST_TIMEOUT     = 60.0
-RECAL_LAMBDA_FLOOR  = float(os.environ.get("SENTRY_LAMBDA_FLOOR", "2.50"))
+RECAL_LAMBDA_FLOOR  = float(os.environ.get("SENTRY_LAMBDA_FLOOR", "4.00"))
 RECAL_DELTA_FLOOR   = float(os.environ.get("SENTRY_DELTA_FLOOR", "0.20"))
 RECAL_BLEND         = 0.10
 RECAL_EVERY         = 10
@@ -620,7 +620,7 @@ def observe(state, lp_content, request_time, pre_dist=None):
             std = float(np.std(state.fr_baseline)) + 1e-8
             # Wider initial thresholds when fewer samples -- scale by sqrt(20/n) uncertainty factor
             n = len(state.fr_warmup_dists)
-            uncertainty = float(np.sqrt(20.0 / n))
+            uncertainty = float(np.sqrt(20.0 / n)) * 1.5  # extra conservatism for small warmup
             state.cusum_delta  = max(0.5 * std * uncertainty, RECAL_DELTA_FLOOR)
             warmup_zs = [(fr - float(np.mean(state.fr_baseline))) / std for fr in state.fr_baseline]
             state.cusum_lambda = max(5.0 * std * uncertainty, max(warmup_zs) * 3.0, RECAL_LAMBDA_FLOOR)
