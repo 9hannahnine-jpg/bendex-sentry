@@ -542,6 +542,9 @@ class DeploymentState:
     steps_in_drift:     int    = 0
     drift_classified:   bool   = False
     drift_fr_zs:        list   = field(default_factory=list)
+    meta_rate_history:  list   = field(default_factory=list)
+    pre_drift_warned:   bool   = False
+    pre_drift_step:     object = None
     drift_eu_zs:        list   = field(default_factory=list)
     drift_token_maps:   list   = field(default_factory=list)
     rec_steps:          int    = 0
@@ -636,6 +639,24 @@ def observe(state, lp_content, request_time, pre_dist=None):
     fv = fisher_rao(dist, state.fr_reference)
     fz = (fv - state.adaptive_mean) / state.adaptive_std
     ev = euclidean(dist, state.eu_centroid); ez = (ev - state.eu_mu) / state.eu_sig
+    # ── M(τ) predictive layer ─────────────────────────────────────
+    # Estimate τ from current FR-z score
+    _tau_est = math.sqrt(3.0 / max(fz + 2.0, 0.01))
+    # Stability eigenvalue: λ(τ) = 3/τ² - 2
+    _lambda_est = 3.0 / (_tau_est ** 2) - 2.0
+    # Meta rate: M(τ) = -6(3 - 2τ²)/τ⁵
+    _meta_rate = -6.0 * (3.0 - 2.0 * _tau_est**2) / (_tau_est**5)
+    state.meta_rate_history.append(round(_meta_rate, 6))
+    # PRE_DRIFT warning: M(τ) > 0 while λ(τ) < 0 (stable but accelerating toward τ*)
+    if _meta_rate > 0 and _lambda_est < 0 and not state.cusum_fired and not state.pre_drift_warned:
+        state.pre_drift_warned = True
+        state.pre_drift_step = state.step
+        print(f"[SENTRY] PRE_DRIFT warning: {state.deployment_id} step={state.step} τ={round(_tau_est,4)} M(τ)={round(_meta_rate,6)}")
+    # Reset pre_drift warning if system recovers
+    if _meta_rate <= 0 and state.pre_drift_warned and not state.cusum_fired:
+        state.pre_drift_warned = False
+        state.pre_drift_step = None
+    # ──────────────────────────────────────────────────────────────
     state.cusum_mean  = 0.9999 * state.cusum_mean + 0.0001 * fz
     state.cusum_value = max(0.0, state.cusum_value + (fz - state.cusum_mean - state.cusum_delta))
     state.cusum_history.append(state.cusum_value)
@@ -677,7 +698,7 @@ def observe(state, lp_content, request_time, pre_dist=None):
         state.last_entropy = _e
         state.hallucination_score = round(max(0.0, 1.0 - _e / state.warmup_entropy), 3)
     return {"status": state.last_status, "step": state.step,
-            "fr_z": round(fz, 3), "eu_z": round(ez, 3),
+            "fr_z": round(fz, 3), "eu_z": round(ez, 3), "meta_rate": round(_meta_rate, 6), "tau_est": round(_tau_est, 4), "lambda_est": round(_lambda_est, 4), "pre_drift": state.pre_drift_warned,
             "cusum": round(state.cusum_value, 3),
             "cusum_delta": round(state.cusum_delta, 4) if state.cusum_delta else None,
             "cusum_lambda": round(state.cusum_lambda, 4) if state.cusum_lambda else None,
@@ -1014,7 +1035,7 @@ async def deployment_detail(deployment_id: str, model_version: str = "default", 
             "requests": s.request_count, "alerts": s.alert_count,
             "warmup_complete": s.step >= s.warmup,
             "drift_type": s.last_drift_type, "confidence": s.last_confidence,
-            "cusum_current": round(s.cusum_value, 3),
+            "cusum_current": round(s.cusum_value, 3), "meta_rate": round(s.meta_rate_history[-1], 6) if s.meta_rate_history else 0, "pre_drift": s.pre_drift_warned, "pre_drift_step": s.pre_drift_step,
             "cusum_lambda": round(s.cusum_lambda, 4) if s.cusum_lambda else None,
             "recal_count": s.recal_count,
             "severity": s.current_severity, "explanation": s.last_explanation,
