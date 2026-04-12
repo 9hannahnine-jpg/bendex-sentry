@@ -620,7 +620,7 @@ def observe(state, lp_content, request_time, pre_dist=None):
             std = float(np.std(state.fr_baseline)) + 1e-8
             # Wider initial thresholds when fewer samples -- scale by sqrt(20/n) uncertainty factor
             n = len(state.fr_warmup_dists)
-            uncertainty = float(np.sqrt(20.0 / n)) * 1.5  # extra conservatism for small warmup
+            uncertainty = 1.0  # no uncertainty scaling -- RECAL handles adaptation
             state.cusum_delta  = max(0.5 * std * uncertainty, RECAL_DELTA_FLOOR)
             warmup_zs = [(fr - float(np.mean(state.fr_baseline))) / std for fr in state.fr_baseline]
             state.cusum_lambda = max(5.0 * std * uncertainty, max(warmup_zs) * 3.0, RECAL_LAMBDA_FLOOR)
