@@ -643,6 +643,12 @@ def observe(state, lp_content, request_time, pre_dist=None):
         recalibrate(state, fv); state.last_status = "quarantine"
         return {"status": "quarantine", "step": state.step, "fr_z": 0,
                 "severity": state.last_severity, "explanation": state.last_explanation}
+    # Skip scoring very short responses -- they have unstable distributions
+    out_tokens = len(tm) if tm else 0
+    if out_tokens < 4 and state.step > state.warmup:
+        state.last_status = state.last_status if state.last_status != "warmup" else "stable"
+        return {"status": state.last_status, "step": state.step, "fr_z": 0,
+                "skipped": "short_response"}
     fv = fisher_rao(dist, state.fr_reference)
     fz = (fv - state.adaptive_mean) / state.adaptive_std
     ev = euclidean(dist, state.eu_centroid); ez = (ev - state.eu_mu) / state.eu_sig
