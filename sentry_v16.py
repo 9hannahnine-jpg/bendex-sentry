@@ -704,14 +704,14 @@ def observe(state, lp_content, request_time, pre_dist=None):
         window_z = (win_mean - baseline_mean) / (baseline_std / float(np.sqrt(len(state.window_frzs))))
 
         # Update CUSUM-compatible fields for dashboard compatibility
-        state.cusum_value = round(max(0.0, window_z), 3)
+        state.cusum_value = round(abs(window_z), 3)
         state.cusum_history.append(state.cusum_value)
 
         # Drift threshold: window mean is 3 sigma above baseline
         DRIFT_THRESHOLD = 3.0
         ELEVATED_THRESHOLD = 1.5
 
-        if window_z > DRIFT_THRESHOLD and not state.cusum_fired:
+        if abs(window_z) > DRIFT_THRESHOLD and not state.cusum_fired:
             state.cusum_fired = True
             state.cusum_fire_step = state.step
             state.cusum_fire_time = request_time
@@ -746,7 +746,7 @@ def observe(state, lp_content, request_time, pre_dist=None):
                 state.current_severity = sv
                 state.last_severity = sv
             # Recovery: window z drops below 1.0
-            if window_z < 1.0:
+            if abs(window_z) < 1.0:
                 state.rec_steps += 1
             else:
                 state.rec_steps = 0
@@ -761,7 +761,7 @@ def observe(state, lp_content, request_time, pre_dist=None):
                 state.adaptive_mean = state.ALPHA * state.adaptive_mean + (1 - state.ALPHA) * fv
                 state.last_status = "RECOVERED"
         else:
-            if window_z < ELEVATED_THRESHOLD:
+            if abs(window_z) < ELEVATED_THRESHOLD:
                 state.last_status = "stable"
                 state.adaptive_mean = state.ALPHA * state.adaptive_mean + (1 - state.ALPHA) * fv
                 recalibrate(state, fv)
