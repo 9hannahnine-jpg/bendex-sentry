@@ -542,6 +542,7 @@ class DeploymentState:
     steps_in_drift:     int    = 0
     drift_classified:   bool   = False
     drift_fr_zs:        list   = field(default_factory=list)
+    window_frzs:        list   = field(default_factory=list)
     meta_rate_history:  list   = field(default_factory=list)
     pre_drift_warned:   bool   = False
     pre_drift_step:     object = None
@@ -684,42 +685,93 @@ def observe(state, lp_content, request_time, pre_dist=None):
         state.pre_drift_warned = False
         state.pre_drift_step = None
     # ──────────────────────────────────────────────────────────────
-    state.cusum_mean  = 0.9999 * state.cusum_mean + 0.0001 * fz
-    state.cusum_value = max(0.0, state.cusum_value + (fz - state.cusum_mean - state.cusum_delta))
-    state.cusum_history.append(state.cusum_value)
-    if state.cusum_value > state.cusum_lambda and not state.cusum_fired:
-        state.cusum_fired = True; state.cusum_fire_step = state.step; state.cusum_fire_time = request_time
-        state.steps_in_drift = 0; state.drift_classified = False
-        state.drift_fr_zs = []; state.drift_eu_zs = []; state.drift_token_maps = []
-        state.rec_steps = 0; state.current_severity = None; state.last_explanation = None
-        state.alert_count += 1; state.last_status = "DRIFT"
-    if state.cusum_fired:
-        state.steps_in_drift += 1; state.drifted_requests += 1
-        state.drift_fr_zs.append(fz); state.drift_eu_zs.append(ez); state.drift_token_maps.append(tm)
-        if state.steps_in_drift >= 3 and not state.drift_classified:
-            dt, conf = classify_drift(state.drift_fr_zs, state.drift_eu_zs, [0.0]*len(state.drift_fr_zs), 0.0)
-            state.drift_classified = True; state.last_drift_type = dt; state.last_confidence = conf
-            state.last_explanation = explain_drift(state.drift_token_maps, state.warmup_token_maps)
-        if state.drift_classified:
-            ttd = request_time - (state.cusum_fire_time or request_time)
-            sv  = compute_severity(state.drift_fr_zs, state.cusum_history[-state.steps_in_drift:],
-                                   state.last_drift_type, state.last_confidence,
-                                   state.request_count, state.drifted_requests, ttd)
-            state.current_severity = sv; state.last_severity = sv
-        if fz < 1.0: state.rec_steps += 1
-        else: state.rec_steps = 0
-        if state.rec_steps >= 3:
-            state.cusum_fired = False; state.cusum_value = 0.0; state.cusum_mean = 0.0
-            state.steps_in_drift = 0; state.drift_classified = False; state.rec_steps = 0
-            state.current_severity = None; state.quarantine_until = state.step + 2
-            state.adaptive_mean = state.ALPHA * state.adaptive_mean + (1 - state.ALPHA) * fv
-            state.last_status = "RECOVERED"
+    # ── Sliding window drift detector ─────────────────────────────
+    # Keep rolling window of last 20 FR-z scores
+    WINDOW = 20
+    state.window_frzs.append(fz)
+    if len(state.window_frzs) > WINDOW:
+        state.window_frzs.pop(0)
+
+    # Only test after we have at least 5 post-warmup observations
+    if len(state.window_frzs) >= 5:
+        win_mean = float(np.mean(state.window_frzs))
+        win_std  = float(np.std(state.window_frzs)) + 1e-8
+        # Baseline: adaptive_mean and adaptive_std from warmup
+        baseline_mean = state.adaptive_mean
+        baseline_std  = state.adaptive_std
+
+        # Z-score of window mean vs baseline
+        window_z = (win_mean - baseline_mean) / (baseline_std / float(np.sqrt(len(state.window_frzs))))
+
+        # Update CUSUM-compatible fields for dashboard compatibility
+        state.cusum_value = round(max(0.0, window_z), 3)
+        state.cusum_history.append(state.cusum_value)
+
+        # Drift threshold: window mean is 3 sigma above baseline
+        DRIFT_THRESHOLD = 3.0
+        ELEVATED_THRESHOLD = 1.5
+
+        if window_z > DRIFT_THRESHOLD and not state.cusum_fired:
+            state.cusum_fired = True
+            state.cusum_fire_step = state.step
+            state.cusum_fire_time = request_time
+            state.steps_in_drift = 0
+            state.drift_classified = False
+            state.drift_fr_zs = []
+            state.drift_eu_zs = []
+            state.drift_token_maps = []
+            state.rec_steps = 0
+            state.current_severity = None
+            state.last_explanation = None
+            state.alert_count += 1
+            state.last_status = "DRIFT"
+
+        if state.cusum_fired:
+            state.steps_in_drift += 1
+            state.drifted_requests += 1
+            state.drift_fr_zs.append(fz)
+            state.drift_eu_zs.append(ez)
+            state.drift_token_maps.append(tm)
+            if state.steps_in_drift >= 3 and not state.drift_classified:
+                dt, conf = classify_drift(state.drift_fr_zs, state.drift_eu_zs, [0.0]*len(state.drift_fr_zs), 0.0)
+                state.drift_classified = True
+                state.last_drift_type = dt
+                state.last_confidence = conf
+                state.last_explanation = explain_drift(state.drift_token_maps, state.warmup_token_maps)
+            if state.drift_classified:
+                ttd = request_time - (state.cusum_fire_time or request_time)
+                sv = compute_severity(state.drift_fr_zs, state.cusum_history[-state.steps_in_drift:],
+                                      state.last_drift_type, state.last_confidence,
+                                      state.request_count, state.drifted_requests, ttd)
+                state.current_severity = sv
+                state.last_severity = sv
+            # Recovery: window z drops below 1.0
+            if window_z < 1.0:
+                state.rec_steps += 1
+            else:
+                state.rec_steps = 0
+            if state.rec_steps >= 5:
+                state.cusum_fired = False
+                state.cusum_value = 0.0
+                state.steps_in_drift = 0
+                state.drift_classified = False
+                state.rec_steps = 0
+                state.current_severity = None
+                state.window_frzs = []
+                state.adaptive_mean = state.ALPHA * state.adaptive_mean + (1 - state.ALPHA) * fv
+                state.last_status = "RECOVERED"
+        else:
+            if window_z < ELEVATED_THRESHOLD:
+                state.last_status = "stable"
+                state.adaptive_mean = state.ALPHA * state.adaptive_mean + (1 - state.ALPHA) * fv
+                recalibrate(state, fv)
+            else:
+                state.last_status = "elevated"
     else:
-        if fz < (state.cusum_delta or 0.5) * 2:
-            state.last_status = "stable"
-            state.adaptive_mean = state.ALPHA * state.adaptive_mean + (1 - state.ALPHA) * fv
-            recalibrate(state, fv)
-        else: state.last_status = "elevated"
+        # Not enough post-warmup observations yet
+        state.last_status = "stable"
+        state.adaptive_mean = state.ALPHA * state.adaptive_mean + (1 - state.ALPHA) * fv
+    # ──────────────────────────────────────────────────────────────
     if lp_content and getattr(state, "warmup_entropy", 0) > 0:
         _e = token_entropy(lp_content)
         state.last_entropy = _e
