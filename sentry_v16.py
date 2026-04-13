@@ -416,6 +416,25 @@ def euclidean(p, q):
         p = p[:min_dim]; q = q[:min_dim]
     return (p - q).norm().item()
 
+def kl_divergence(p, q):
+    """KL divergence D(p||q) -- standard baseline detector."""
+    if p.shape != q.shape:
+        min_dim = min(p.shape[0], q.shape[0])
+        p = p[:min_dim]; q = q[:min_dim]
+        p = p / p.sum(); q = q / q.sum()
+    p = p.clamp(1e-10, 1.0); q = q.clamp(1e-10, 1.0)
+    return float(torch.sum(p * torch.log(p / q)).item())
+
+def js_divergence(p, q):
+    """Jensen-Shannon divergence -- symmetric KL baseline."""
+    if p.shape != q.shape:
+        min_dim = min(p.shape[0], q.shape[0])
+        p = p[:min_dim]; q = q[:min_dim]
+        p = p / p.sum(); q = q / q.sum()
+    p = p.clamp(1e-10, 1.0); q = q.clamp(1e-10, 1.0)
+    m = 0.5 * (p + q)
+    return float(0.5 * (torch.sum(p * torch.log(p / m)) + torch.sum(q * torch.log(q / m))).item())
+
 def token_entropy(lp):
     if not lp: return 0.0
     probs = np.array([float(np.exp(item.get("logprob", -100))) for item in lp])
@@ -543,6 +562,12 @@ class DeploymentState:
     drift_classified:   bool   = False
     drift_fr_zs:        list   = field(default_factory=list)
     window_frzs:        list   = field(default_factory=list)
+    window_kls:         list   = field(default_factory=list)
+    window_jss:         list   = field(default_factory=list)
+    kl_baseline:        float  = 0.0
+    js_baseline:        float  = 0.0
+    kl_std:             float  = 1.0
+    js_std:             float  = 1.0
     meta_rate_history:  list   = field(default_factory=list)
     pre_drift_warned:   bool   = False
     pre_drift_step:     object = None
@@ -666,6 +691,13 @@ def observe(state, lp_content, request_time, pre_dist=None):
                     "skipped": "short_response"}
     fv = fisher_rao(dist, state.fr_reference)
     fz = (fv - state.adaptive_mean) / state.adaptive_std
+    # Compute KL and JS for baseline comparison
+    kl_dist = kl_divergence(dist, state.fr_reference)
+    js_dist = js_divergence(dist, state.fr_reference)
+    # Update KL/JS baselines during warmup completion
+    if not state.kl_baseline:
+        state.kl_baseline = kl_dist
+        state.js_baseline = js_dist
     ev = euclidean(dist, state.eu_centroid); ez = (ev - state.eu_mu) / state.eu_sig
     # ── M(τ) predictive layer ─────────────────────────────────────
     # Estimate τ from current FR-z score
@@ -697,6 +729,11 @@ def observe(state, lp_content, request_time, pre_dist=None):
     state.window_frzs.append(fz)
     if len(state.window_frzs) > 10:
         state.window_frzs.pop(0)
+    # Track KL and JS windows for comparison
+    state.window_kls.append(kl_dist)
+    if len(state.window_kls) > 10: state.window_kls.pop(0)
+    state.window_jss.append(js_dist)
+    if len(state.window_jss) > 10: state.window_jss.pop(0)
 
     # Enough observations to test?
     if len(state.window_frzs) >= 5:
@@ -778,7 +815,7 @@ def observe(state, lp_content, request_time, pre_dist=None):
         state.last_entropy = _e
         state.hallucination_score = round(max(0.0, 1.0 - _e / state.warmup_entropy), 3)
     return {"status": state.last_status, "step": state.step,
-            "fr_z": round(fz, 3), "eu_z": round(ez, 3), "meta_rate": round(_meta_rate, 6), "tau_est": round(_tau_est, 4), "lambda_est": round(_lambda_est, 4), "pre_drift": state.pre_drift_warned,
+            "fr_z": round(fz, 3), "eu_z": round(ez, 3), "kl_dist": round(kl_dist, 6), "js_dist": round(js_dist, 6), "kl_window_mean": round(float(np.mean(state.window_kls)), 6) if state.window_kls else 0, "js_window_mean": round(float(np.mean(state.window_jss)), 6) if state.window_jss else 0, "meta_rate": round(_meta_rate, 6), "tau_est": round(_tau_est, 4), "lambda_est": round(_lambda_est, 4), "pre_drift": state.pre_drift_warned,
             "cusum": round(state.cusum_value, 3),
             "cusum_delta": round(state.cusum_delta, 4) if state.cusum_delta else None,
             "cusum_lambda": round(state.cusum_lambda, 4) if state.cusum_lambda else None,
