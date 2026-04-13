@@ -18,7 +18,7 @@ WARMUP_STEPS        = int(os.environ.get("SENTRY_WARMUP", "10"))
 VOCAB_SIZE          = 50000
 REQUEST_TIMEOUT     = 60.0
 RECAL_LAMBDA_FLOOR  = float(os.environ.get("SENTRY_LAMBDA_FLOOR", "4.00"))
-RECAL_DELTA_FLOOR   = float(os.environ.get("SENTRY_DELTA_FLOOR", "0.20"))
+RECAL_DELTA_FLOOR   = float(os.environ.get("SENTRY_DELTA_FLOOR", "1.00"))
 RECAL_BLEND         = 0.10
 RECAL_EVERY         = 10
 TOP_K_EXPLAIN       = 8
@@ -633,7 +633,7 @@ def observe(state, lp_content, request_time, pre_dist=None):
                 if sim_cusum > sim_peak:
                     sim_peak = sim_cusum
             # Lambda = 3x the peak CUSUM seen on stable warmup traffic, floored at RECAL_LAMBDA_FLOOR
-            natural_lambda = max(sim_peak * 3.0, 5.0 * std, RECAL_LAMBDA_FLOOR)
+            natural_lambda = max(sim_peak * 10.0, 5.0 * std, RECAL_LAMBDA_FLOOR)
             state.cusum_lambda = natural_lambda
             state.adaptive_mean = float(np.mean(state.fr_baseline)); state.adaptive_std = std
             stack2 = torch.stack(state.eu_warmup_dists); state.eu_centroid = stack2.mean(0)
