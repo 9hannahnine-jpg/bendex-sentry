@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arc-sentry"
+version = "2.4.0"
+description = "Arc Sentry — prompt injection detection for open source LLMs. Blocks attacks before generate() is called."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+  {name = "Hannah Nine", email = "9hannahnine@gmail.com"}
+]
+keywords = ["llm", "security", "prompt injection", "ai safety", "monitoring"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Security",
+]
+dependencies = [
+  "numpy>=1.21",
+  "torch>=1.10",
+  "transformers>=4.20",
+  "scikit-learn>=1.0",
+]
+
+[project.urls]
+Homepage = "https://bendexgeometry.com/sentry"
+Repository = "https://github.com/9hannahnine-jpg/bendex-sentry"
+
+[tool.setuptools.packages.find]
+include = ["arc_sentry_v2*"]
