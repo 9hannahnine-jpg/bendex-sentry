@@ -28,6 +28,11 @@ INJECTION_PHRASES = [
     "prior instructions", "jailbreak", "dan mode", "do anything now",
     "questioning your own restrictions", "questioning your restrictions",
     "evil ai", "secret mode",
+    "overriding your instructions",
+    "restrictions were lifted",
+    "restrictions have been lifted",
+    "restrictions were removed",
+    "lifted yesterday",
 ]
 
 
@@ -38,6 +43,8 @@ SAFE_PHRASES = [
     "printer is not working",
     "computer is running slowly",
     "my computer is running",
+    "dispute a charge",
+    "solicitor and a barrister",
 ]
 
 def _whitelist_check(prompt: str) -> bool:
