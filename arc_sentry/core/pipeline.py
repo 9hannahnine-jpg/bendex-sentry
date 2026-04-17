@@ -290,14 +290,16 @@ class ArcSentryV3:
         self._session.reset()
 
     def report(self):
-        print(f"\n{\'=\'*60}")
+        sep = "=" * 60
+        print(f"\n{sep}")
         print(f"ARC SENTRY v{self.VERSION} | route={self.route_id}")
         print(f"layer={self._layer} | SNR={self._snr:.3f} | "
               f"threshold={self._threshold:.4f} | tau*={TAU_STAR:.4f}")
         print(f"Requests: {self.request_count} | Alerts: {len(self.alert_history)}")
         if self.alert_history:
-            print(f"Last block: fired={self.alert_history[-1][\'fired_by\']}")
-        print(f"{\'=\'*60}\n")
+            last = self.alert_history[-1]
+            print(f"Last block: fired={last['fired_by']}")
+        print(f"{sep}\n")
 
 
 # Backwards compatibility alias

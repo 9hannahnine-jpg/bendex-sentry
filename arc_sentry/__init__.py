@@ -1,6 +1,6 @@
 from arc_sentry.core.pipeline import ArcSentryV3, ArcSentryV2
-from arc_sentry.models.base_adapter import BaseModelAdapter
 from arc_sentry.models.mistral_adapter import MistralAdapter
+from arc_sentry.models.qwen_adapter import QwenAdapter
 
-__version__ = "3.0.0"
-__all__ = ["ArcSentryV3", "ArcSentryV2", "BaseModelAdapter", "MistralAdapter"]
+__version__ = "3.1.0"
+__all__ = ["ArcSentryV3", "ArcSentryV2", "MistralAdapter", "QwenAdapter"]

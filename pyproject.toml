@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arc-sentry"
-version = "3.0.1"
+version = "3.1.0"
 description = "Arc Sentry — prompt injection detection for LLMs. DR=100%, FPR=0% on Mistral-7B. Geometric detection via Fisher manifold (Nine 2026)."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -32,4 +32,4 @@ Homepage = "https://bendexgeometry.com/sentry"
 Repository = "https://github.com/9hannahnine-jpg/bendex-sentry"
 
 [tool.setuptools.packages.find]
-include = ["arc_sentry*"]
+include = ["arc_sentry"]
