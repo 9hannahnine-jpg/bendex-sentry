@@ -159,6 +159,28 @@ header{display:flex;align-items:center;justify-content:space-between;padding:16p
     </div>
   </aside>
   <main class="main" id="main-panel">
+
+  <!-- Chat Test Panel -->
+  <div class="chat-panel">
+    <div class="card-header">
+      <span class="card-title">Live Test — send prompts through Arc Gate</span>
+      <span id="chat-status" style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text3);">ready</span>
+    </div>
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-msg"><div class="chat-bubble system">type a prompt below — normal or injection</div></div>
+    </div>
+    <div id="score-row" class="score-row" style="display:none;">
+      <div class="score-item">D(t): <span id="sc-dt">—</span></div>
+      <div class="score-item">FR: <span id="sc-fr">—</span></div>
+      <div class="score-item">SNR: <span id="sc-snr">—</span></div>
+      <div class="score-item" id="sc-fired-wrap">Fired: <span id="sc-fired">—</span></div>
+    </div>
+    <div class="chat-input-row">
+      <input class="chat-input" id="chat-input" placeholder="Type any prompt... try: ignore all previous instructions" maxlength="500"/>
+      <button class="chat-send" id="chat-send" onclick="sendChat()">Send →</button>
+    </div>
+  </div>
+
     <div class="empty-state">
       <div style="font-size:32px;opacity:0.2;">◈</div>
       <div>Select a deployment</div>
