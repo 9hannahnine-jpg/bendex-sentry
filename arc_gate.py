@@ -26,9 +26,6 @@ DB_PATH             = os.environ.get("SENTRY_DB", "./arc_gate.db")
 CHECKPOINT_EVERY    = 1
 N_LOGPROB_POSITIONS = 5
 PORT                = int(os.environ.get("PORT", "8083"))
-# τ* = √(3/2) ≈ 1.2247 — Landauer threshold of the reflexive manifold (Nine 2026c).
-# FR distances below τ* are below the manifold noise floor and treated as
-# behaviorally equivalent (P3). Empirical warmup calibration may refine per-deployment.
 TAU_STAR            = math.sqrt(3.0 / 2.0)
 NOISE_FLOOR         = float(os.environ.get("SENTRY_NOISE_FLOOR", str(TAU_STAR)))
 DASHBOARD_PATH      = os.environ.get("SENTRY_DASHBOARD", "/content/dashboard.html")
@@ -42,6 +39,8 @@ ALERT_SMTP_USER     = os.environ.get("SENTRY_SMTP_USER", "")
 ALERT_SMTP_PASS     = os.environ.get("SENTRY_SMTP_PASS", "")
 EMBED_MODEL_NAME    = os.environ.get("SENTRY_EMBED_MODEL", "all-MiniLM-L6-v2")
 
+# Demo key substitution
+_DEMO_KEYS = {"demo", "demo-key", "test"}
 
 INJECTION_PHRASES = [
     "no restrictions", "without restrictions", "unrestricted",
@@ -67,7 +66,6 @@ def _phrase_blocked(prompt: str):
             return True, ph
     return False, None
 
-# ── API Key Auth ──────────────────────────────────────────────
 _api_key_header = _APIKeyHeader(name="X-Bendex-API-Key", auto_error=False)
 
 def check_api_key(key: str) -> bool:
@@ -80,7 +78,6 @@ async def auth(api_key: str = Depends(_api_key_header)):
     if keys and (not api_key or api_key not in keys):
         raise HTTPException(status_code=401, detail="Invalid or missing X-Bendex-API-Key")
 
-# ── Embedding model ───────────────────────────────────────────
 _embed_model = None
 
 def get_embed_model():
@@ -95,8 +92,6 @@ def get_embed_model():
     return _embed_model
 
 def response_to_dist(text):
-    """Convert response text to probability distribution via embedding + softmax.
-    Used as fallback when logprobs unavailable (Claude, Gemini, etc)."""
     if not text or not text.strip(): return None
     try:
         model = get_embed_model()
@@ -108,7 +103,6 @@ def response_to_dist(text):
         print("[EMBED] response_to_dist: " + str(e))
         return None
 
-# ── Prices per 1M tokens. Updated April 2026. ────────────────
 COST_TABLE = {
     "gpt-4.1":             {"in": 2.00,  "out": 8.00},
     "gpt-4.1-mini":        {"in": 0.40,  "out": 1.60},
@@ -129,8 +123,6 @@ def calc_cost(model, in_tok, out_tok):
     if not key: return 0.0
     c = COST_TABLE[key]
     return round((in_tok * c["in"] + out_tok * c["out"]) / 1_000_000, 8)
-
-# ── Database ──────────────────────────────────────────────────
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -189,8 +181,8 @@ def _state_tensors(state):
     buf = io.BytesIO()
     def _t(x):
         if x is None: return None
-        if hasattr(x, 'numpy'): return x.detach().cpu().numpy()
-        if isinstance(x, list) and x and hasattr(x[0], 'numpy'):
+        if hasattr(x, "numpy"): return x.detach().cpu().numpy()
+        if isinstance(x, list) and x and hasattr(x[0], "numpy"):
             return [t.detach().cpu().numpy() for t in x]
         return None
     data = {
@@ -249,7 +241,6 @@ def load_state(did, version):
         if row:
             s = pickle.loads(row[0])
             if not hasattr(s, "_obs_lock") or s._obs_lock is None: s._obs_lock = Lock()
-            print("[DB] Loaded legacy pickle state for " + did + "/" + version)
             return s
     except Exception as e: print("[DB] load_state_pickle: " + str(e))
     return None
@@ -262,7 +253,6 @@ def save_version_snapshot(did, version, state):
              state.adaptive_mean, state.adaptive_std, state.request_count, time.time(),
              getattr(state, "noise_floor", NOISE_FLOOR)))
         conn.commit(); conn.close()
-        print("[SNAPSHOT] Saved: " + did + " v=" + version)
     except Exception as e: print("[DB] save_snapshot: " + str(e))
 
 def load_version_snapshot(did, version):
@@ -367,8 +357,6 @@ def list_versions(did):
                  "status": r[3], "warmup_complete": bool(r[4])} for r in rows]
     except: return []
 
-# ── Alerts ────────────────────────────────────────────────────
-
 async def send_webhook_alert(did, version, result):
     if not ALERT_WEBHOOK_URL: return
     sv = result.get("severity") or {}
@@ -388,7 +376,6 @@ async def send_webhook_alert(did, version, result):
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(ALERT_WEBHOOK_URL, json=payload)
-        print("[ALERT] Webhook sent")
     except Exception as e: print("[ALERT] Webhook failed: " + str(e))
 
 def send_email_alert(did, version, result):
@@ -398,7 +385,14 @@ def send_email_alert(did, version, result):
     sv = result.get("severity") or {}
     ex = result.get("explanation") or {}
     subject = "[Sentry {}] {} on {}/{}".format(sv.get("tier","?"), result.get("drift_type","DRIFT"), did, version)
-    body = "Deployment: {}\nVersion: {}\nTier: {}\nType: {}\nAction: {}\nToken shift: {}\nScore: {}\n".format(
+    body = "Deployment: {}
+Version: {}
+Tier: {}
+Type: {}
+Action: {}
+Token shift: {}
+Score: {}
+".format(
         did, version, sv.get("tier","?"), result.get("drift_type","?"),
         sv.get("action",""), ex.get("summary",""), sv.get("score","?"))
     msg = MIMEText(body)
@@ -407,10 +401,7 @@ def send_email_alert(did, version, result):
         with smtplib.SMTP(ALERT_SMTP_HOST, ALERT_SMTP_PORT) as s:
             s.starttls(); s.login(ALERT_SMTP_USER, ALERT_SMTP_PASS)
             s.sendmail(ALERT_SMTP_USER, ALERT_EMAIL_TO, msg.as_string())
-        print("[ALERT] Email sent to " + ALERT_EMAIL_TO)
     except Exception as e: print("[ALERT] Email failed: " + str(e))
-
-# ── Signal math ───────────────────────────────────────────────
 
 def logprobs_to_dist(lp, vocab_size=VOCAB_SIZE):
     dist = torch.zeros(vocab_size)
@@ -428,7 +419,6 @@ def logprobs_to_token_map(lp):
     return tm
 
 def fisher_rao(p, q):
-    # Align dimensions if needed (embedding vs logprob distributions may differ)
     if p.shape != q.shape:
         min_dim = min(p.shape[0], q.shape[0])
         p = p[:min_dim]; q = q[:min_dim]
@@ -443,7 +433,6 @@ def euclidean(p, q):
     return (p - q).norm().item()
 
 def kl_divergence(p, q):
-    """KL divergence D(p||q) -- standard baseline detector."""
     if p.shape != q.shape:
         min_dim = min(p.shape[0], q.shape[0])
         p = p[:min_dim]; q = q[:min_dim]
@@ -452,7 +441,6 @@ def kl_divergence(p, q):
     return float(torch.sum(p * torch.log(p / q)).item())
 
 def js_divergence(p, q):
-    """Jensen-Shannon divergence -- symmetric KL baseline."""
     if p.shape != q.shape:
         min_dim = min(p.shape[0], q.shape[0])
         p = p[:min_dim]; q = q[:min_dim]
@@ -466,8 +454,7 @@ def token_entropy(lp):
     probs = np.array([float(np.exp(item.get("logprob", -100))) for item in lp])
     s = probs.sum()
     if s <= 0: return 0.0
-    probs = probs / s
-    probs = probs[probs > 1e-10]
+    probs = probs / s; probs = probs[probs > 1e-10]
     return float(-np.sum(probs * np.log(probs)))
 
 def explain_drift(drift_maps, warmup_maps, top_k=TOP_K_EXPLAIN):
@@ -488,8 +475,7 @@ def explain_drift(drift_maps, warmup_maps, top_k=TOP_K_EXPLAIN):
           for t, r in gained if r > 1.5 and dp.get(t, 0) > 0.001]
     lf = [{"token": t, "ratio": round(r, 3), "drift_pct": round(dp.get(t,0)*100,3), "warmup_pct": round(wp.get(t,0)*100,3)}
           for t, r in lost if r < 0.67 and wp.get(t, 0) > 0.001]
-    tg = [g["token"].strip() for g in gf[:3]]
-    tl = [l["token"].strip() for l in lf[:3]]
+    tg = [g["token"].strip() for g in gf[:3]]; tl = [l["token"].strip() for l in lf[:3]]
     parts = []
     if tg: parts.append("Started generating: " + ", ".join(repr(t) for t in tg))
     if tl: parts.append("Stopped generating: " + ", ".join(repr(t) for t in tl))
@@ -552,8 +538,6 @@ def recalibrate(state, fr_val):
         state.steps_since_recal = 0; state.recal_count += 1
         return True
     return False
-
-# ── State ─────────────────────────────────────────────────────
 
 @dataclass
 class DeploymentState:
@@ -634,7 +618,6 @@ class DeploymentStore:
                 s = load_state(did, version)
                 if s is None:
                     s = DeploymentState(deployment_id=did, model_version=version)
-                    print("[STORE] New: " + did + " v=" + version)
                 if not hasattr(s, "_obs_lock") or s._obs_lock is None: s._obs_lock = Lock()
                 self._s[key] = s
             self._s[key].last_seen = time.time()
@@ -650,8 +633,6 @@ class DeploymentStore:
 
 store = DeploymentStore()
 
-# ── Observe ───────────────────────────────────────────────────
-
 def observe(state, lp_content, request_time, pre_dist=None):
     state.step += 1; state.request_count += 1; state.last_seen = request_time
     dist = pre_dist if pre_dist is not None else (logprobs_to_dist(lp_content) if lp_content else None)
@@ -660,33 +641,22 @@ def observe(state, lp_content, request_time, pre_dist=None):
         if dist is not None:
             state.fr_warmup_dists.append(dist); state.eu_warmup_dists.append(dist)
             state.warmup_token_maps.append(tm)
-        # Online reference update -- recompute reference after every new warmup dist
         if len(state.fr_warmup_dists) >= 2:
             stack = torch.stack([torch.sqrt(d) for d in state.fr_warmup_dists])
             ms = stack.mean(0); ms = ms / ms.norm(); ref = ms ** 2
             state.fr_reference = ref / ref.sum()
-
         if state.step == state.warmup and state.fr_warmup_dists:
-            # Warmup complete -- compute baseline stats
-            state.fr_baseline  = [fisher_rao(d, state.fr_reference) for d in state.fr_warmup_dists]
+            state.fr_baseline = [fisher_rao(d, state.fr_reference) for d in state.fr_warmup_dists]
             std = float(np.std(state.fr_baseline)) + 1e-8
-            # Wider initial thresholds when fewer samples -- scale by sqrt(20/n) uncertainty factor
             n = len(state.fr_warmup_dists)
-            uncertainty = 1.0  # no uncertainty scaling -- RECAL handles adaptation
-            state.cusum_delta  = max(0.5 * std, RECAL_DELTA_FLOOR)
+            state.cusum_delta = max(0.5 * std, RECAL_DELTA_FLOOR)
             warmup_zs = [(fr - float(np.mean(state.fr_baseline))) / std for fr in state.fr_baseline]
-            # Simulate CUSUM on warmup to find natural peak -- set lambda 3x above that
-            sim_cusum = 0.0
-            sim_mean = 0.0
-            sim_peak = 0.0
+            sim_cusum = 0.0; sim_mean = 0.0; sim_peak = 0.0
             for wz in warmup_zs:
                 sim_mean = 0.9999 * sim_mean + 0.0001 * wz
                 sim_cusum = max(0.0, sim_cusum + (wz - sim_mean - max(0.5*std, RECAL_DELTA_FLOOR)))
-                if sim_cusum > sim_peak:
-                    sim_peak = sim_cusum
-            # Lambda = 3x the peak CUSUM seen on stable warmup traffic, floored at RECAL_LAMBDA_FLOOR
-            natural_lambda = max(sim_peak * 10.0, 5.0 * std, RECAL_LAMBDA_FLOOR)
-            state.cusum_lambda = natural_lambda
+                if sim_cusum > sim_peak: sim_peak = sim_cusum
+            state.cusum_lambda = max(sim_peak * 10.0, 5.0 * std, RECAL_LAMBDA_FLOOR)
             state.adaptive_mean = float(np.mean(state.fr_baseline)); state.adaptive_std = std
             stack2 = torch.stack(state.eu_warmup_dists); state.eu_centroid = stack2.mean(0)
             eu_ds = [euclidean(d, state.eu_centroid) for d in state.eu_warmup_dists]
@@ -694,7 +664,6 @@ def observe(state, lp_content, request_time, pre_dist=None):
             state.noise_floor = NOISE_FLOOR; state.last_status = "stable"
             _we = [token_entropy([{"token": t, "logprob": float(np.log(p + 1e-10))} for t, p in tm.items()]) for tm in state.warmup_token_maps]
             state.warmup_entropy = float(np.mean(_we)) if _we else 0.0
-            print("[SENTRY] Warmup complete (n=" + str(n) + " uncertainty=" + str(round(uncertainty,2)) + "): " + state.deployment_id + " v=" + state.model_version + " λ=" + str(round(state.cusum_lambda, 4)))
             save_version_snapshot(state.deployment_id, state.model_version, state)
             state.snapshot_saved = True
         return {"status": "warmup", "step": state.step, "fr_z": 0}
@@ -707,142 +676,85 @@ def observe(state, lp_content, request_time, pre_dist=None):
         return {"status": "quarantine", "step": state.step, "fr_z": 0,
                 "severity": state.last_severity, "explanation": state.last_explanation}
     fv = fisher_rao(dist, state.fr_reference)
-    # Skip scoring very short responses -- check by total probability mass spread
-    # If top token has >80% probability, response is nearly deterministic (1-2 tokens)
     if tm and state.step > state.warmup:
         top_prob = max(tm.values()) if tm else 0
         if top_prob > 0.80:
             state.last_status = state.last_status if state.last_status != "warmup" else "stable"
-            return {"status": state.last_status, "step": state.step, "fr_z": 0,
-                    "skipped": "short_response"}
+            return {"status": state.last_status, "step": state.step, "fr_z": 0, "skipped": "short_response"}
     fv = fisher_rao(dist, state.fr_reference)
     fz = (fv - state.adaptive_mean) / state.adaptive_std
-    # Compute KL and JS for baseline comparison
     kl_dist = kl_divergence(dist, state.fr_reference)
     js_dist = js_divergence(dist, state.fr_reference)
-    # Update KL/JS baselines during warmup completion
-    if not state.kl_baseline:
-        state.kl_baseline = kl_dist
-        state.js_baseline = js_dist
+    if not state.kl_baseline: state.kl_baseline = kl_dist; state.js_baseline = js_dist
     ev = euclidean(dist, state.eu_centroid); ez = (ev - state.eu_mu) / state.eu_sig
-    # ── M(τ) predictive layer ─────────────────────────────────────
-    # Estimate τ from current FR-z score
     _tau_est = math.sqrt(3.0 / max(fz + 2.0, 0.01))
-    # Stability eigenvalue: λ(τ) = 3/τ² - 2
     _lambda_est = 3.0 / (_tau_est ** 2) - 2.0
-    # Meta rate: M(τ) = -6(3 - 2τ²)/τ⁵
     _meta_rate = -6.0 * (3.0 - 2.0 * _tau_est**2) / (_tau_est**5)
     state.meta_rate_history.append(round(_meta_rate, 6))
-    # PRE_DRIFT warning: M(τ) > 0 while λ(τ) < 0 (stable but accelerating toward τ*)
     if _meta_rate > 0 and _lambda_est < 0 and not state.cusum_fired and not state.pre_drift_warned:
-        state.pre_drift_warned = True
-        state.pre_drift_step = state.step
-        print(f"[SENTRY] PRE_DRIFT warning: {state.deployment_id} step={state.step} τ={round(_tau_est,4)} M(τ)={round(_meta_rate,6)}")
-    # Reset pre_drift warning if system recovers
+        state.pre_drift_warned = True; state.pre_drift_step = state.step
     if _meta_rate <= 0 and state.pre_drift_warned and not state.cusum_fired:
-        state.pre_drift_warned = False
-        state.pre_drift_step = None
-    # ──────────────────────────────────────────────────────────────
-    # ── Online robust baseline + anomaly window detector ──────────
-    # Compute z-score against current baseline
-    fz_abs = abs(fz)
-    NORMAL_THRESHOLD  = 2.0   # below this: update baseline, status stable
-    ELEVATED_THRESHOLD = 2.0  # above this: don't update baseline, status elevated
-    DRIFT_THRESHOLD   = 3.0   # anomaly window mean above this: DRIFT
-    BASELINE_LR       = 0.15  # learning rate for baseline update on normal requests
-
-    # Anomaly window: last 10 fz scores that exceeded normal threshold
+        state.pre_drift_warned = False; state.pre_drift_step = None
+    ELEVATED_THRESHOLD = 2.0; DRIFT_THRESHOLD = 3.0; BASELINE_LR = 0.15
     state.window_frzs.append(fz)
-    if len(state.window_frzs) > 10:
-        state.window_frzs.pop(0)
-    # Track KL and JS windows for comparison
+    if len(state.window_frzs) > 10: state.window_frzs.pop(0)
     state.window_kls.append(kl_dist)
     if len(state.window_kls) > 10: state.window_kls.pop(0)
     state.window_jss.append(js_dist)
     if len(state.window_jss) > 10: state.window_jss.pop(0)
-
-    # Enough observations to test?
     if len(state.window_frzs) >= 5:
         win_mean = float(np.mean(state.window_frzs))
-
-        # Window z-score against baseline
         window_z = (win_mean - state.adaptive_mean) / (state.adaptive_std / float(np.sqrt(len(state.window_frzs))))
         state.cusum_value = round(abs(window_z), 3)
         state.cusum_history.append(state.cusum_value)
-
         if abs(window_z) > DRIFT_THRESHOLD and not state.cusum_fired:
-            # Drift confirmed -- window mean has shifted significantly
-            state.cusum_fired = True
-            state.cusum_fire_step = state.step
-            state.cusum_fire_time = request_time
-            state.steps_in_drift = 0
-            state.drift_classified = False
-            state.drift_fr_zs = []
-            state.drift_eu_zs = []
-            state.drift_token_maps = []
-            state.rec_steps = 0
-            state.current_severity = None
-            state.last_explanation = None
-            state.alert_count += 1
-            state.last_status = "DRIFT"
-
+            state.cusum_fired = True; state.cusum_fire_step = state.step
+            state.cusum_fire_time = request_time; state.steps_in_drift = 0
+            state.drift_classified = False; state.drift_fr_zs = []; state.drift_eu_zs = []
+            state.drift_token_maps = []; state.rec_steps = 0
+            state.current_severity = None; state.last_explanation = None
+            state.alert_count += 1; state.last_status = "DRIFT"
         if state.cusum_fired:
-            state.steps_in_drift += 1
-            state.drifted_requests += 1
-            state.drift_fr_zs.append(fz)
-            state.drift_eu_zs.append(ez)
-            state.drift_token_maps.append(tm)
+            state.steps_in_drift += 1; state.drifted_requests += 1
+            state.drift_fr_zs.append(fz); state.drift_eu_zs.append(ez); state.drift_token_maps.append(tm)
             if state.steps_in_drift >= 3 and not state.drift_classified:
                 dt, conf = classify_drift(state.drift_fr_zs, state.drift_eu_zs, [0.0]*len(state.drift_fr_zs), 0.0)
-                state.drift_classified = True
-                state.last_drift_type = dt
-                state.last_confidence = conf
+                state.drift_classified = True; state.last_drift_type = dt; state.last_confidence = conf
                 state.last_explanation = explain_drift(state.drift_token_maps, state.warmup_token_maps)
             if state.drift_classified:
                 ttd = request_time - (state.cusum_fire_time or request_time)
                 sv = compute_severity(state.drift_fr_zs, state.cusum_history[-state.steps_in_drift:],
                                       state.last_drift_type, state.last_confidence,
                                       state.request_count, state.drifted_requests, ttd)
-                state.current_severity = sv
-                state.last_severity = sv
-            # Recovery: window z drops back to normal
-            if abs(window_z) < 1.5:
-                state.rec_steps += 1
-            else:
-                state.rec_steps = 0
+                state.current_severity = sv; state.last_severity = sv
+            if abs(window_z) < 1.5: state.rec_steps += 1
+            else: state.rec_steps = 0
             if state.rec_steps >= 5:
-                state.cusum_fired = False
-                state.cusum_value = 0.0
-                state.steps_in_drift = 0
-                state.drift_classified = False
-                state.rec_steps = 0
-                state.current_severity = None
-                state.window_frzs = []
-                state.last_status = "RECOVERED"
-                # After recovery, update baseline toward new normal
+                state.cusum_fired = False; state.cusum_value = 0.0
+                state.steps_in_drift = 0; state.drift_classified = False
+                state.rec_steps = 0; state.current_severity = None
+                state.window_frzs = []; state.last_status = "RECOVERED"
                 state.adaptive_mean = (1 - BASELINE_LR) * state.adaptive_mean + BASELINE_LR * fv
         else:
             if abs(window_z) < ELEVATED_THRESHOLD:
-                # Normal request -- update baseline to absorb legitimate traffic diversity
                 state.last_status = "stable"
                 state.adaptive_mean = (1 - BASELINE_LR) * state.adaptive_mean + BASELINE_LR * fv
                 state.adaptive_std  = (1 - BASELINE_LR) * state.adaptive_std  + BASELINE_LR * abs(fv - state.adaptive_mean)
                 recalibrate(state, fv)
             else:
-                # Elevated -- suspicious but not confirmed drift, don't update baseline
                 state.last_status = "elevated"
     else:
-        # Building initial window -- update baseline freely
         state.last_status = "stable"
         state.adaptive_mean = (1 - BASELINE_LR) * state.adaptive_mean + BASELINE_LR * fv
-    # ──────────────────────────────────────────────────────────────
     if lp_content and getattr(state, "warmup_entropy", 0) > 0:
-        _e = token_entropy(lp_content)
-        state.last_entropy = _e
+        _e = token_entropy(lp_content); state.last_entropy = _e
         state.hallucination_score = round(max(0.0, 1.0 - _e / state.warmup_entropy), 3)
     return {"status": state.last_status, "step": state.step,
-            "fr_z": round(fz, 3), "eu_z": round(ez, 3), "kl_dist": round(kl_dist, 6), "js_dist": round(js_dist, 6), "kl_window_mean": round(float(np.mean(state.window_kls)), 6) if state.window_kls else 0, "js_window_mean": round(float(np.mean(state.window_jss)), 6) if state.window_jss else 0, "meta_rate": round(_meta_rate, 6), "tau_est": round(_tau_est, 4), "lambda_est": round(_lambda_est, 4), "pre_drift": state.pre_drift_warned,
-            "cusum": round(state.cusum_value, 3),
+            "fr_z": round(fz, 3), "eu_z": round(ez, 3), "kl_dist": round(kl_dist, 6), "js_dist": round(js_dist, 6),
+            "kl_window_mean": round(float(np.mean(state.window_kls)), 6) if state.window_kls else 0,
+            "js_window_mean": round(float(np.mean(state.window_jss)), 6) if state.window_jss else 0,
+            "meta_rate": round(_meta_rate, 6), "tau_est": round(_tau_est, 4), "lambda_est": round(_lambda_est, 4),
+            "pre_drift": state.pre_drift_warned, "cusum": round(state.cusum_value, 3),
             "cusum_delta": round(state.cusum_delta, 4) if state.cusum_delta else None,
             "cusum_lambda": round(state.cusum_lambda, 4) if state.cusum_lambda else None,
             "drift_type": state.last_drift_type, "confidence": state.last_confidence,
@@ -850,8 +762,6 @@ def observe(state, lp_content, request_time, pre_dist=None):
             "model_version": state.model_version,
             "hallucination_score": round(getattr(state, "hallucination_score", 0.0), 3),
             "entropy": round(getattr(state, "last_entropy", 0.0), 4)}
-
-# ── Version compare ───────────────────────────────────────────
 
 def compare_versions(did, version_from, version_to):
     snap_from = load_version_snapshot(did, version_from)
@@ -875,15 +785,12 @@ def compare_versions(did, version_from, version_to):
     save_regression_comparison(did, version_from, version_to, result)
     return result
 
-# ── Eval / Assertion layer ────────────────────────────────────
-
 class AssertionRegistry:
     def __init__(self): self._r = {}; self._lock = Lock()
     def add(self, did, name, fn, reason="failed"):
         with self._lock:
             if did not in self._r: self._r[did] = {}
             self._r[did][name] = (fn, reason)
-        print("[EVAL] Added assertion: " + name + " -> " + did)
     def remove(self, did, name):
         with self._lock:
             if did in self._r: self._r[did].pop(name, None)
@@ -894,36 +801,30 @@ class AssertionRegistry:
 
 assertions = AssertionRegistry()
 
-def _builtin_not_empty(trace):
-    return bool(trace.get("response", "").strip()), "Response is empty"
-
+def _builtin_not_empty(trace): return bool(trace.get("response", "").strip()), "Response is empty"
 def _builtin_no_refusal(trace):
     r = trace.get("response", "").lower()
-    triggers = ["i cannot", "i'm unable", "i am unable", "i don't have access",
-                "i can't", "as an ai", "i'm not able", "i am not able"]
+    triggers = ["i cannot", "i'm unable", "i am unable", "i don't have access", "i can't", "as an ai", "i'm not able", "i am not able"]
     hit = next((t for t in triggers if t in r), None)
     return hit is None, f"Refusal detected: '{hit}'"
-
 def _builtin_latency(trace):
     ok = trace.get("latency_ms", 0) < 15000
     return ok, f"Latency {trace.get('latency_ms',0):.0f}ms exceeds 15000ms"
-
 def _builtin_hallucination(trace):
     ok = trace.get("hallucination_score", 0.0) < 0.7
     return ok, f"Hallucination score {trace.get('hallucination_score',0):.2f} exceeds 0.7"
 
 BUILTIN_ASSERTIONS = {
-    "response_not_empty": (_builtin_not_empty,   "Response is empty"),
-    "no_refusal":         (_builtin_no_refusal,   "Refusal phrase detected"),
-    "latency_ok":         (_builtin_latency,       "Latency too high"),
-    "hallucination_ok":   (_builtin_hallucination, "Hallucination score too high"),
+    "response_not_empty": (_builtin_not_empty,    "Response is empty"),
+    "no_refusal":         (_builtin_no_refusal,    "Refusal phrase detected"),
+    "latency_ok":         (_builtin_latency,        "Latency too high"),
+    "hallucination_ok":   (_builtin_hallucination,  "Hallucination score too high"),
 }
 
 def _register_builtins(did):
     existing = assertions.list_all(did)
     for name, (fn, reason) in BUILTIN_ASSERTIONS.items():
-        if name not in existing:
-            assertions.add(did, name, fn, reason)
+        if name not in existing: assertions.add(did, name, fn, reason)
 
 def run_assertions(did, version, req_id, trace, timestamp):
     _register_builtins(did)
@@ -935,50 +836,33 @@ def run_assertions(did, version, req_id, trace, timestamp):
             result = fn(trace)
             if isinstance(result, tuple): passed, reason = result
             else: passed, reason = bool(result), default_reason
-        except Exception as e:
-            passed, reason = False, "Assertion error: " + str(e)
+        except Exception as e: passed, reason = False, "Assertion error: " + str(e)
         results.append({"name": name, "passed": passed, "reason": reason if not passed else ""})
-        rows.append((did, version, req_id, name, 1 if passed else 0,
-                     reason if not passed else "", timestamp))
+        rows.append((did, version, req_id, name, 1 if passed else 0, reason if not passed else "", timestamp))
     try:
         conn = sqlite3.connect(DB_PATH)
-        conn.executemany(
-            "INSERT INTO eval_results(deployment_id,model_version,request_id,assertion_name,passed,reason,timestamp) VALUES(?,?,?,?,?,?,?)",
-            rows)
+        conn.executemany("INSERT INTO eval_results(deployment_id,model_version,request_id,assertion_name,passed,reason,timestamp) VALUES(?,?,?,?,?,?,?)", rows)
         conn.commit(); conn.close()
     except Exception as e: print("[EVAL] DB error: " + str(e))
-    failures = [r for r in results if not r["passed"]]
-    if failures:
-        print("[EVAL] " + did + " " + req_id + " FAILED: " + ", ".join(f["name"] for f in failures))
     return results
 
 def get_eval_summary(did, version=None, limit=200):
     try:
         conn = sqlite3.connect(DB_PATH)
         if version:
-            rows = conn.execute(
-                "SELECT assertion_name, passed, reason, timestamp, request_id FROM eval_results WHERE deployment_id=? AND model_version=? ORDER BY timestamp DESC LIMIT ?",
-                (did, version, limit)).fetchall()
+            rows = conn.execute("SELECT assertion_name, passed, reason, timestamp, request_id FROM eval_results WHERE deployment_id=? AND model_version=? ORDER BY timestamp DESC LIMIT ?", (did, version, limit)).fetchall()
         else:
-            rows = conn.execute(
-                "SELECT assertion_name, passed, reason, timestamp, request_id FROM eval_results WHERE deployment_id=? ORDER BY timestamp DESC LIMIT ?",
-                (did, limit)).fetchall()
+            rows = conn.execute("SELECT assertion_name, passed, reason, timestamp, request_id FROM eval_results WHERE deployment_id=? ORDER BY timestamp DESC LIMIT ?", (did, limit)).fetchall()
         conn.close()
         stats = {}
         for name, passed, reason, ts, req_id in rows:
-            if name not in stats:
-                stats[name] = {"name": name, "total": 0, "passed": 0, "failures": []}
+            if name not in stats: stats[name] = {"name": name, "total": 0, "passed": 0, "failures": []}
             stats[name]["total"] += 1
             if passed: stats[name]["passed"] += 1
-            elif len(stats[name]["failures"]) < 5:
-                stats[name]["failures"].append({"reason": reason, "timestamp": ts, "request_id": req_id})
-        for s in stats.values():
-            s["pass_rate"] = round(s["passed"] / s["total"], 4) if s["total"] else 1.0
+            elif len(stats[name]["failures"]) < 5: stats[name]["failures"].append({"reason": reason, "timestamp": ts, "request_id": req_id})
+        for s in stats.values(): s["pass_rate"] = round(s["passed"] / s["total"], 4) if s["total"] else 1.0
         return list(stats.values())
-    except Exception as e:
-        print("[EVAL] get_eval_summary: " + str(e)); return []
-
-# ── Proxy helpers ─────────────────────────────────────────────
+    except Exception as e: print("[EVAL] get_eval_summary: " + str(e)); return []
 
 def _extract_logprobs(rb, n=N_LOGPROB_POSITIONS):
     try:
@@ -998,10 +882,8 @@ def _inject_logprobs(body):
     body = dict(body); body["logprobs"] = True; body["top_logprobs"] = 20; return body
 
 def _inject_logprobs_stream(body):
-    body = dict(body)
-    body["logprobs"] = True; body["top_logprobs"] = 20
-    body["stream_options"] = {"include_usage": True}
-    return body
+    body = dict(body); body["logprobs"] = True; body["top_logprobs"] = 20
+    body["stream_options"] = {"include_usage": True}; return body
 
 def _extract_logprobs_streaming(chunks, n=N_LOGPROB_POSITIONS):
     try:
@@ -1025,72 +907,50 @@ async def _stream_proxy(request, path, body_dict, fwd, did, version, hdrs, req_s
     accumulated = []; usage_data = {}
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            async with client.stream(
-                method=request.method,
-                url=UPSTREAM_URL.rstrip("/") + "/" + path,
-                headers=hdrs, content=fwd,
-                params=dict(request.query_params)
-            ) as resp:
+            async with client.stream(method=request.method, url=UPSTREAM_URL.rstrip("/") + "/" + path,
+                                     headers=hdrs, content=fwd, params=dict(request.query_params)) as resp:
                 async for raw_line in resp.aiter_lines():
-                    if not raw_line:
-                        yield "\n"; continue
-                    yield raw_line + "\n\n"
+                    if not raw_line: yield "
+"; continue
+                    yield raw_line + "
+
+"
                     if raw_line.startswith("data: ") and raw_line != "data: [DONE]":
                         try:
-                            chunk = json.loads(raw_line[6:])
-                            accumulated.append(chunk)
+                            chunk = json.loads(raw_line[6:]); accumulated.append(chunk)
                             if chunk.get("usage"): usage_data = chunk["usage"]
                         except: pass
-    except Exception as e:
-        yield "data: " + json.dumps({"error": str(e)}) + "\n\n"; return
-    rt         = time.time()
-    lp         = _extract_logprobs_streaming(accumulated)
-    in_tok     = usage_data.get("prompt_tokens", 0)
-    out_tok    = usage_data.get("completion_tokens", 0)
-    cost       = calc_cost(body_dict.get("model", ""), in_tok, out_tok)
-    latency_ms = round((rt - req_start) * 1000, 1)
-    req_id     = str(uuid.uuid4())[:8]
-    prompt     = (body_dict.get("messages") or [{}])[-1].get("content", "")[:500]
-    resp_text  = "".join(
-        ((c.get("choices") or [{}])[0].get("delta") or {}).get("content") or ""
-        for c in accumulated
-    )[:500]
+    except Exception as e: yield "data: " + json.dumps({"error": str(e)}) + "
+
+"; return
+    rt = time.time(); lp = _extract_logprobs_streaming(accumulated)
+    in_tok = usage_data.get("prompt_tokens", 0); out_tok = usage_data.get("completion_tokens", 0)
+    cost = calc_cost(body_dict.get("model", ""), in_tok, out_tok)
+    latency_ms = round((rt - req_start) * 1000, 1); req_id = str(uuid.uuid4())[:8]
+    prompt = (body_dict.get("messages") or [{}])[-1].get("content", "")[:500]
+    resp_text = "".join(((c.get("choices") or [{}])[0].get("delta") or {}).get("content") or "" for c in accumulated)[:500]
     state = store.get_or_create(did, version)
     async def _monitor_stream():
         try:
             with state._obs_lock:
                 pre_dist = response_to_dist(resp_text) if lp is None and resp_text else None
                 result = observe(state, lp, rt, pre_dist=pre_dist)
-            status = result.get("status", ""); step = result.get("step", 0)
-            fz = result.get("fr_z", 0)
-            save_trace(did, version, req_id, prompt, resp_text,
-                       in_tok, out_tok, latency_ms, cost, status, fz, rt)
-            run_assertions(did, version, req_id, {
-                "prompt": prompt, "response": resp_text,
-                "input_tokens": in_tok, "output_tokens": out_tok,
-                "latency_ms": latency_ms, "cost_usd": cost,
-                "drift_status": status, "fr_z": fz,
-                "hallucination_score": getattr(state, "hallucination_score", 0.0),
-            }, rt)
+            status = result.get("status", ""); step = result.get("step", 0); fz = result.get("fr_z", 0)
+            save_trace(did, version, req_id, prompt, resp_text, in_tok, out_tok, latency_ms, cost, status, fz, rt)
+            run_assertions(did, version, req_id, {"prompt": prompt, "response": resp_text,
+                "input_tokens": in_tok, "output_tokens": out_tok, "latency_ms": latency_ms,
+                "cost_usd": cost, "drift_status": status, "fr_z": fz,
+                "hallucination_score": getattr(state, "hallucination_score", 0.0)}, rt)
             if status == "DRIFT" and state.drift_classified and state.steps_in_drift == 3:
                 sv = result.get("severity") or {}
-                save_drift_event(did, version, {
-                    "detect_step": state.cusum_fire_step, "type": state.last_drift_type,
+                save_drift_event(did, version, {"detect_step": state.cusum_fire_step, "type": state.last_drift_type,
                     "confidence": state.last_confidence, "severity": sv, "timestamp": rt})
-                print("[ALERT][STREAM] " + did + " v=" + version +
-                      " type=" + str(result.get("drift_type","?")) + " tier=" + str(sv.get("tier","?")))
-                ex = result.get("explanation") or {}
-                if ex.get("summary"): print("[EXPLAIN] " + ex["summary"])
                 alert_payload = {"drift_type": result.get("drift_type"), "severity": sv,
-                                 "explanation": ex, "confidence": state.last_confidence}
+                                 "explanation": result.get("explanation") or {}, "confidence": state.last_confidence}
                 asyncio.create_task(send_webhook_alert(did, version, alert_payload))
                 if ALERT_EMAIL_TO and ALERT_SMTP_USER:
                     import threading
-                    threading.Thread(target=send_email_alert,
-                                     args=(did, version, alert_payload), daemon=True).start()
-            elif step % 10 == 0:
-                print("[OK][STREAM] " + did + " v=" + version +
-                      " step=" + str(step) + " status=" + status)
+                    threading.Thread(target=send_email_alert, args=(did, version, alert_payload), daemon=True).start()
             if step % CHECKPOINT_EVERY == 0: store.checkpoint(did, version)
         except Exception as e: print("[ERROR][STREAM] " + str(e))
     asyncio.create_task(_monitor_stream())
@@ -1098,15 +958,11 @@ async def _stream_proxy(request, path, body_dict, fwd, did, version, hdrs, req_s
 def _is_inference(path):
     return any(p in path for p in ["chat/completions", "completions", "generate"])
 
-# ── DB auto-load ──────────────────────────────────────────────
-
 def _load_all_from_db():
     try:
         conn = sqlite3.connect(DB_PATH)
-        try:
-            rows = conn.execute("SELECT DISTINCT deployment_id, model_version FROM deployment_state_v2").fetchall()
-        except:
-            rows = conn.execute("SELECT DISTINCT deployment_id, model_version FROM deployment_state").fetchall()
+        try: rows = conn.execute("SELECT DISTINCT deployment_id, model_version FROM deployment_state_v2").fetchall()
+        except: rows = conn.execute("SELECT DISTINCT deployment_id, model_version FROM deployment_state").fetchall()
         conn.close()
         loaded = 0
         for did, version in rows:
@@ -1114,21 +970,15 @@ def _load_all_from_db():
                 s = load_state(did, version)
                 if s is not None:
                     if not hasattr(s, "_obs_lock") or s._obs_lock is None: s._obs_lock = Lock()
-                    with store._lock:
-                        store._s[(did, version)] = s
+                    with store._lock: store._s[(did, version)] = s
                     loaded += 1
         if loaded: print(f"[DB] Auto-loaded {loaded} deployments from DB")
     except Exception as e: print("[DB] _load_all_from_db: " + str(e))
 
-# ── App ───────────────────────────────────────────────────────
-
 @asynccontextmanager
 async def lifespan(app):
-    init_db()
-    _load_all_from_db()
-    get_embed_model()
+    init_db(); _load_all_from_db(); get_embed_model()
     print("Arc Gate v1.0 | Upstream: " + UPSTREAM_URL)
-    print(f"Dashboard: http://0.0.0.0:{PORT}/dashboard")
     yield
     for did, version in store.list_all(): store.checkpoint(did, version)
 
@@ -1151,8 +1001,7 @@ async def dashboard():
 @app.get("/sentry/health")
 async def health():
     return {"status": "ok", "version": "1.0", "upstream": UPSTREAM_URL,
-            "db": DB_PATH, "deployments": len(store.list_all()),
-            "alerts": {"webhook": bool(ALERT_WEBHOOK_URL), "email": bool(ALERT_EMAIL_TO)}}
+            "db": DB_PATH, "deployments": len(store.list_all())}
 
 @app.get("/sentry/deployments")
 async def list_deployments(auth=Depends(auth)):
@@ -1160,10 +1009,9 @@ async def list_deployments(auth=Depends(auth)):
     result = []
     for did, version in store.list_all():
         s = store.get(did, version)
-        if s:
-            result.append({"deployment_id": did, "model_version": version,
-                           "status": s.last_status, "requests": s.request_count,
-                           "alerts": s.alert_count, "warmup_complete": s.step >= s.warmup})
+        if s: result.append({"deployment_id": did, "model_version": version,
+                              "status": s.last_status, "requests": s.request_count,
+                              "alerts": s.alert_count, "warmup_complete": s.step >= s.warmup})
     return {"deployments": result, "total": len(result)}
 
 @app.get("/sentry/deployments/{deployment_id}")
@@ -1173,31 +1021,28 @@ async def deployment_detail(deployment_id: str, model_version: str = "default", 
     if s is None: return JSONResponse(status_code=404, content={"error": "not found"})
     cost = get_cost_summary(deployment_id, model_version)
     return {"deployment_id": deployment_id, "model_version": model_version,
-            "status": s.last_status, "step": s.step,
-            "requests": s.request_count, "alerts": s.alert_count,
-            "warmup_complete": s.step >= s.warmup,
+            "status": s.last_status, "step": s.step, "requests": s.request_count,
+            "alerts": s.alert_count, "warmup_complete": s.step >= s.warmup,
             "drift_type": s.last_drift_type, "confidence": s.last_confidence,
-            "cusum_current": round(s.cusum_value, 3), "meta_rate": round(s.meta_rate_history[-1], 6) if s.meta_rate_history else 0, "pre_drift": s.pre_drift_warned, "pre_drift_step": s.pre_drift_step,
+            "cusum_current": round(s.cusum_value, 3),
+            "meta_rate": round(s.meta_rate_history[-1], 6) if s.meta_rate_history else 0,
+            "pre_drift": s.pre_drift_warned, "pre_drift_step": s.pre_drift_step,
             "cusum_lambda": round(s.cusum_lambda, 4) if s.cusum_lambda else None,
-            "recal_count": s.recal_count,
-            "severity": s.current_severity, "explanation": s.last_explanation,
-            "snapshot_saved": s.snapshot_saved,
+            "recal_count": s.recal_count, "severity": s.current_severity,
+            "explanation": s.last_explanation, "snapshot_saved": s.snapshot_saved,
             "noise_floor": getattr(s, "noise_floor", None),
             "drift_history": get_drift_history(deployment_id, model_version),
-            "cost_summary": cost,
-            "hallucination_score": getattr(s, "hallucination_score", 0.0),
+            "cost_summary": cost, "hallucination_score": getattr(s, "hallucination_score", 0.0),
             "warmup_entropy": getattr(s, "warmup_entropy", 0.0),
             "created_at": s.created_at, "last_seen": s.last_seen}
 
 @app.get("/sentry/deployments/{deployment_id}/traces")
 async def deployment_traces(deployment_id: str, model_version: str = "default", limit: int = 50, auth=Depends(auth)):
-    return {"deployment_id": deployment_id,
-            "traces": get_traces(deployment_id, model_version, limit)}
+    return {"deployment_id": deployment_id, "traces": get_traces(deployment_id, model_version, limit)}
 
 @app.get("/sentry/deployments/{deployment_id}/cost")
 async def deployment_cost(deployment_id: str, model_version: str = "default", auth=Depends(auth)):
-    return {"deployment_id": deployment_id,
-            "cost": get_cost_summary(deployment_id, model_version)}
+    return {"deployment_id": deployment_id, "cost": get_cost_summary(deployment_id, model_version)}
 
 @app.get("/sentry/deployments/{deployment_id}/versions")
 async def deployment_versions(deployment_id: str, auth=Depends(auth)):
@@ -1215,34 +1060,31 @@ async def deployment_metrics(deployment_id: str, model_version: str = "default",
     d = deployment_id; v = model_version
     lines = [
         "# TYPE bendex_requests_total counter",
-        "bendex_requests_total{deployment=\"" + d + "\",version=\"" + v + "\"} " + str(s.request_count),
+        f"bendex_requests_total{{deployment="{d}",version="{v}"}} {s.request_count}",
         "# TYPE bendex_alerts_total counter",
-        "bendex_alerts_total{deployment=\"" + d + "\",version=\"" + v + "\"} " + str(s.alert_count),
+        f"bendex_alerts_total{{deployment="{d}",version="{v}"}} {s.alert_count}",
         "# TYPE bendex_cusum_current gauge",
-        "bendex_cusum_current{deployment=\"" + d + "\",version=\"" + v + "\"} " + str(round(s.cusum_value, 3)),
+        f"bendex_cusum_current{{deployment="{d}",version="{v}"}} {round(s.cusum_value,3)}",
         "# TYPE bendex_status gauge",
-        "bendex_status{deployment=\"" + d + "\",version=\"" + v + "\"} " + str(
-            2 if s.last_status == "DRIFT" else 1 if s.last_status == "elevated" else 0),
+        f"bendex_status{{deployment="{d}",version="{v}"}} {2 if s.last_status == 'DRIFT' else 1 if s.last_status == 'elevated' else 0}",
     ]
-    return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")
+    return Response(content="
+".join(lines), media_type="text/plain; version=0.0.4")
 
 @app.get("/sentry/deployments/{deployment_id}/evals")
 async def deployment_evals(deployment_id: str, model_version: str = "default", auth=Depends(auth)):
-    return {"deployment_id": deployment_id,
-            "evals": get_eval_summary(deployment_id, model_version)}
+    return {"deployment_id": deployment_id, "evals": get_eval_summary(deployment_id, model_version)}
 
 @app.post("/sentry/deployments/{deployment_id}/assertions")
 async def add_assertion(deployment_id: str, request: Request, auth=Depends(auth)):
     body = await request.json()
     name = body.get("name", ""); code = body.get("code", ""); reason = body.get("reason", "Assertion failed")
-    if not name or not code:
-        return JSONResponse(status_code=400, content={"error": "name and code required"})
+    if not name or not code: return JSONResponse(status_code=400, content={"error": "name and code required"})
     try:
         fn = eval("lambda trace: " + code)
         assertions.add(deployment_id, name, fn, reason)
         return {"status": "ok", "name": name, "deployment_id": deployment_id}
-    except Exception as e:
-        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e: return JSONResponse(status_code=400, content={"error": str(e)})
 
 @app.delete("/sentry/deployments/{deployment_id}/assertions/{name}")
 async def remove_assertion(deployment_id: str, name: str, auth=Depends(auth)):
@@ -1262,34 +1104,34 @@ async def proxy(request: Request, path: str,
     did     = x_sentry_deployment or (auth_h[-8:] if auth_h else None) or "default"
     version = x_sentry_model_version or (body_dict.get("model", "default") if is_json else "default")
     req_start = time.time()
+
     hdrs = {k: v for k, v in request.headers.items()
             if k.lower() not in ("host", "accept-encoding", "x-sentry-deployment", "x-sentry-model-version")}
     hdrs["accept-encoding"] = "identity"
+
+    # ── Demo key substitution ──────────────────────────────────
+    _incoming_token = auth_h.replace("Bearer ", "").replace("bearer ", "").strip()
+    if _incoming_token in _DEMO_KEYS:
+        _real_key = os.environ.get("OPENAI_API_KEY", "")
+        if _real_key:
+            hdrs["authorization"] = f"Bearer {_real_key}"
+        else:
+            return JSONResponse(status_code=503, content={"error": "Demo mode unavailable: OPENAI_API_KEY not configured on server."})
+
     if is_inf and is_json and body_dict.get("stream", False):
         fwd_s = json.dumps(_inject_logprobs_stream(body_dict)).encode()
         hdrs_s = dict(hdrs); hdrs_s["content-length"] = str(len(fwd_s))
-        return StreamingResponse(
-            _stream_proxy(request, path, body_dict, fwd_s, did, version, hdrs_s, req_start),
-            media_type="text/event-stream",
-            headers={"cache-control": "no-cache", "x-accel-buffering": "no"}
-        )
-    # ── Prompt injection check (block mode) ─────────────────
+        return StreamingResponse(_stream_proxy(request, path, body_dict, fwd_s, did, version, hdrs_s, req_start),
+            media_type="text/event-stream", headers={"cache-control": "no-cache", "x-accel-buffering": "no"})
+
     if BLOCK_MODE and is_inf and is_json:
         prompt_text = (body_dict.get("messages") or [{}])[-1].get("content", "")
         phrase_fired, matched = _phrase_blocked(prompt_text)
         if phrase_fired:
-            print(f"[BLOCKED] phrase:{matched} | {prompt_text[:60]}")
             return JSONResponse(status_code=200, content={
-                "id": "blocked",
-                "object": "chat.completion",
-                "choices": [{
-                    "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": "[BLOCKED by Arc Sentry — prompt injection detected]"
-                    },
-                    "finish_reason": "stop"
-                }],
+                "id": "blocked", "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant",
+                    "content": "[BLOCKED by Arc Sentry — prompt injection detected]"}, "finish_reason": "stop"}],
                 "model": body_dict.get("model", "unknown"),
                 "arc_sentry": {"blocked": True, "reason": f"phrase:{matched}"}
             })
@@ -1299,65 +1141,46 @@ async def proxy(request: Request, path: str,
     if is_inf and is_json: hdrs["content-length"] = str(len(fwd))
     try:
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            up = await client.request(method=request.method,
-                                      url=UPSTREAM_URL.rstrip("/") + "/" + path,
-                                      headers=hdrs, content=fwd,
-                                      params=dict(request.query_params))
+            up = await client.request(method=request.method, url=UPSTREAM_URL.rstrip("/") + "/" + path,
+                                      headers=hdrs, content=fwd, params=dict(request.query_params))
     except Exception as e: return JSONResponse(status_code=502, content={"error": str(e)})
     rb = {}
     if is_inf:
         try: rb = up.json()
         except: pass
     if is_inf and rb:
-        lp    = _extract_logprobs(rb)
-        state = store.get_or_create(did, version)
-        rt    = time.time()
-        latency_ms = round((rt - req_start) * 1000, 1)
-        req_id    = str(uuid.uuid4())[:8]
-        prompt    = (body_dict.get("messages") or [{}])[-1].get("content", "")[:500] if is_json else ""
-        response  = ""
-        in_tok = 0; out_tok = 0
+        lp = _extract_logprobs(rb); state = store.get_or_create(did, version)
+        rt = time.time(); latency_ms = round((rt - req_start) * 1000, 1)
+        req_id = str(uuid.uuid4())[:8]
+        prompt = (body_dict.get("messages") or [{}])[-1].get("content", "")[:500] if is_json else ""
+        response = ""; in_tok = 0; out_tok = 0
         choices = rb.get("choices") or []
         if choices: response = ((choices[0].get("message") or {}).get("content") or "")[:500]
         usage = rb.get("usage") or {}
-        in_tok  = usage.get("prompt_tokens", 0)
-        out_tok = usage.get("completion_tokens", 0)
-        model_name = body_dict.get("model", "") if is_json else ""
-        cost = calc_cost(model_name, in_tok, out_tok)
+        in_tok = usage.get("prompt_tokens", 0); out_tok = usage.get("completion_tokens", 0)
+        cost = calc_cost(body_dict.get("model", "") if is_json else "", in_tok, out_tok)
         async def _monitor():
             try:
                 with state._obs_lock:
                     pre_dist = response_to_dist(response) if lp is None and response else None
                     result = observe(state, lp, rt, pre_dist=pre_dist)
-                status = result.get("status", ""); step = result.get("step", 0)
-                fz = result.get("fr_z", 0)
-                save_trace(did, version, req_id, prompt, response, in_tok, out_tok,
-                           latency_ms, cost, status, fz, rt)
-                run_assertions(did, version, req_id, {
-                    "prompt": prompt, "response": response,
-                    "input_tokens": in_tok, "output_tokens": out_tok,
-                    "latency_ms": latency_ms, "cost_usd": cost,
-                    "drift_status": status, "fr_z": fz,
-                    "hallucination_score": getattr(state, "hallucination_score", 0.0),
-                }, rt)
+                status = result.get("status", ""); step = result.get("step", 0); fz = result.get("fr_z", 0)
+                save_trace(did, version, req_id, prompt, response, in_tok, out_tok, latency_ms, cost, status, fz, rt)
+                run_assertions(did, version, req_id, {"prompt": prompt, "response": response,
+                    "input_tokens": in_tok, "output_tokens": out_tok, "latency_ms": latency_ms,
+                    "cost_usd": cost, "drift_status": status, "fr_z": fz,
+                    "hallucination_score": getattr(state, "hallucination_score", 0.0)}, rt)
                 if status == "DRIFT" and state.drift_classified and state.steps_in_drift == 3:
                     sv = result.get("severity") or {}
-                    save_drift_event(did, version, {
-                        "detect_step": state.cusum_fire_step,
-                        "type": state.last_drift_type,
-                        "confidence": state.last_confidence,
+                    save_drift_event(did, version, {"detect_step": state.cusum_fire_step,
+                        "type": state.last_drift_type, "confidence": state.last_confidence,
                         "severity": sv, "timestamp": rt})
-                    print("[ALERT] " + did + " v=" + version + " type=" + str(result.get("drift_type","?")) + " tier=" + str(sv.get("tier","?")))
-                    ex = result.get("explanation") or {}
-                    if ex.get("summary"): print("[EXPLAIN] " + ex["summary"])
                     alert_payload = {"drift_type": result.get("drift_type"), "severity": sv,
-                                     "explanation": ex, "confidence": state.last_confidence}
+                                     "explanation": result.get("explanation") or {}, "confidence": state.last_confidence}
                     asyncio.create_task(send_webhook_alert(did, version, alert_payload))
                     if ALERT_EMAIL_TO and ALERT_SMTP_USER:
                         import threading
                         threading.Thread(target=send_email_alert, args=(did, version, alert_payload), daemon=True).start()
-                elif step % 10 == 0:
-                    print("[OK] " + did + " v=" + version + " step=" + str(step) + " status=" + status)
                 if step % CHECKPOINT_EVERY == 0: store.checkpoint(did, version)
             except Exception as e: print("[ERROR] " + str(e))
         asyncio.create_task(_monitor())
