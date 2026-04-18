@@ -1144,7 +1144,6 @@ async def dashboard():
     try:
         with open(DASHBOARD_PATH, "r") as f: html = f.read()
         html = html.replace("__SENTRY_BASE_URL__", SENTRY_BASE_URL)
-        html = html.replace("v11.0", "v16.0")
         return HTMLResponse(content=html)
     except Exception as e:
         return HTMLResponse(content="<h1>Dashboard error</h1><p>" + str(e) + "</p>", status_code=500)
