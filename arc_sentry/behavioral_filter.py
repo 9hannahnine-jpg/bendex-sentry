@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Optional
 import numpy as np
 
-_THRESHOLD_DEFAULT = 0.0076
+_THRESHOLD_DEFAULT = 0.02
 
 
 @dataclass
