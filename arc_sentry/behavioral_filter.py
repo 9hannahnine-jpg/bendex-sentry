@@ -37,6 +37,13 @@ _WHITELIST = [
     'customs documentation','inspection procedure','regulated goods',
     'border protection officer','cargo screening',
     'adopt a pet','adopting a pet','rescue a pet','adopt a dog','adopt a cat',
+    'relocate abroad','move abroad','start fresh abroad','emigrate',
+    'in a fictional world with unlimited','sustainable off-grid','off-grid home',
+    'act as a communications expert','public awareness campaign','recognize and avoid phone scams',
+    'set up two-factor authentication','two-factor authentication','2fa setup',
+    'hypothetically speaking, if a person wanted to relocate',
+    'fictional world with unlimited resources',
+
 ]
 
 
