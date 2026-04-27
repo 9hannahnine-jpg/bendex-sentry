@@ -99,7 +99,7 @@ class BehavioralFilter:
         embedder = self._get_embedder()
         x = embedder.encode([prompt], normalize_embeddings=True, show_progress_bar=False)
         x_pca = self._pca.transform(x)
-        return float(x_pca @ self._v)
+        return float((x_pca @ self._v).flatten()[0])
 
     def screen(self, prompt: str) -> FilterResult:
         """
