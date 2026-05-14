@@ -140,3 +140,64 @@ Arc Sentry's detection method is grounded in the second-order Fisher manifold fr
 ---
 
 Bendex Geometry LLC · 2026 Hannah Nine · [bendexgeometry.com](https://bendexgeometry.com)
+
+
+---
+
+## Limitations and Threat Model
+
+Arc Gate is a runtime governance layer for LLM systems. It is designed to reduce the risk of unauthorized instruction-authority transfer and unsafe agent behavior through source-aware policy enforcement, session-state tracking, and capability restriction.
+
+Arc Gate does not claim to "solve prompt injection" universally. Prompt injection remains an open research problem, particularly for highly adaptive semantic attacks against frontier models.
+
+### Current Detection Scope
+
+Arc Gate performs strongly against:
+- explicit instruction override attempts,
+- authority-claim attacks,
+- multi-turn escalation patterns,
+- system prompt extraction attempts,
+- tool poisoning with instruction-bearing external content,
+- and capability abuse attempts in agentic workflows.
+
+Current benchmark results:
+- 91% TPR on 500k synthetic prompt benchmark,
+- 0% observed FPR across benchmarked benign developer/security traffic,
+- 100% detection/prevention across 22 evaluated agentic attack scenarios.
+
+These evaluations are reproducible and publicly benchmarked through `arc-sentry-benchmark`.
+
+### Known Limitations
+
+Arc Gate currently has reduced coverage against:
+
+#### 1. Semantic Roleplay Attacks
+Attacks that avoid explicit authority-transfer language and instead manipulate the model through subtle framing, emotional persuasion, or implicit behavioral steering may evade deterministic authority-boundary detection.
+
+#### 2. Novel Jailbreak Styles
+Previously unseen jailbreak structures may temporarily bypass static or rule-based detection logic until new patterns are incorporated into evaluation and policy updates. Arc Gate prioritizes low false-positive rates over aggressive speculative blocking.
+
+#### 3. Multilingual and Cross-Lingual Attacks
+Current evaluations are primarily English-language focused. Detection quality may degrade for multilingual conversations, mixed-language attacks, transliterated prompts, or culturally specific phrasing patterns.
+
+#### 4. Indirect Reasoning Attacks
+Some attacks operate through long-chain reasoning or latent semantic influence rather than direct instruction override attempts. These attacks may not produce clear authority-boundary violations detectable by current policy layers.
+
+#### 5. Long-Horizon Agent Memory Manipulation
+Arc Gate currently focuses on runtime session governance. Persistent long-term memory poisoning and cross-session manipulation remain partially unsolved problems in agent security more broadly.
+
+### Operational Philosophy
+
+Arc Gate is designed around graceful degradation, capability restriction, explainable enforcement, and low false-positive operational behavior. In ambiguous situations, Arc Gate prefers MONITOR or RESTRICTED_CONTINUE rather than aggressive hard blocking. This design prioritizes preserving legitimate developer and enterprise workflows while still reducing practical attack surface.
+
+### Defense-in-Depth
+
+Arc Gate should not be treated as a standalone guarantee of agent security. Best practices still include least-privilege tool design, scoped credentials, human approval for high-risk actions, output validation, audit logging, and sandboxed execution environments.
+
+### Continuous Evaluation
+
+Prompt injection techniques evolve rapidly. Arc Gate is continuously evaluated against public benchmarks, adversarial submissions, real-world agent workflows, and newly discovered attack patterns. Known failure cases and benchmark updates are versioned publicly to support transparent security evaluation.
+
+### Security Positioning
+
+Arc Gate is not a claim of universal prompt injection prevention. Arc Gate is a runtime governance system designed to enforce instruction-authority boundaries, restrict unsafe capabilities under risk, and reduce the probability of unsafe agent actions in practical deployments.
